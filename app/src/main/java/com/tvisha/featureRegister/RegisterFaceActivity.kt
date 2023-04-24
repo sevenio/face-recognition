@@ -25,13 +25,12 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.tvisha.MobileFaceNet
 import com.tvisha.livenessdetect.databinding.ActivityRegisterBinding
 import org.tensorflow.lite.Interpreter
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.ReadOnlyBufferException
 import java.nio.channels.FileChannel
@@ -315,6 +314,7 @@ class RegisterFaceActivity : AppCompatActivity() {
 
     var start = true
 
+
     private fun addUser() {
         start = false
         val builder = AlertDialog.Builder(this@RegisterFaceActivity)
@@ -388,7 +388,7 @@ class RegisterFaceActivity : AppCompatActivity() {
         //During type conversion and save/load procedure,format changes(eg float converted to double).
         //So embeddings need to be extracted from it in required format(eg.double to float).
         for ((_, value) in retrievedMap) {
-            val output = Array(1) {
+            val output = Array(2) {
                 FloatArray(
                     OUTPUT_SIZE
                 )
@@ -398,6 +398,7 @@ class RegisterFaceActivity : AppCompatActivity() {
             for (counter in arrayList.indices) {
                 output[0][counter] = (arrayList[counter] as Double).toFloat()
             }
+
             value.setExtra(output)
 
             //System.out.println("Entry output "+entry.getKey()+" "+entry.getValue().getExtra() );
@@ -408,91 +409,99 @@ class RegisterFaceActivity : AppCompatActivity() {
     }
 
     fun recognizeImage(bitmap: Bitmap) {
-
-        // set Face to Preview
         binding.ivCapture.setImageBitmap(bitmap)
+        val mfn = MobileFaceNet(assets)
+        embeedings = mfn.getImageEmbedding(bitmap)
+    }
 
-        //Create ByteBuffer to store normalized image
-        val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
-        imgData.order(ByteOrder.nativeOrder())
-        intValues = IntArray(inputSize * inputSize)
 
-        //get pixel values from Bitmap to normalize
-        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        imgData.rewind()
-        for (i in 0 until inputSize) {
-            for (j in 0 until inputSize) {
-                val pixelValue: Int = intValues.get(i * inputSize + j)
-                if (isModelQuantized) {
-                    // Quantized model
-                    imgData.put((pixelValue shr 16 and 0xFF).toByte())
-                    imgData.put((pixelValue shr 8 and 0xFF).toByte())
-                    imgData.put((pixelValue and 0xFF).toByte())
-                } else { // Float model
-                    imgData.putFloat(((pixelValue shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                    imgData.putFloat(((pixelValue shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                    imgData.putFloat(((pixelValue and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                }
-            }
-        }
-        //imgData is input to our model
-        val inputArray = arrayOf<Any>(imgData)
-        val outputMap: MutableMap<Int, Any> = HashMap()
-        embeedings =
-            Array<FloatArray>(1) { FloatArray(OUTPUT_SIZE) } //output of model will be stored in this variable
-        outputMap[0] = embeedings
-        tfLite!!.runForMultipleInputsOutputs(inputArray, outputMap) //Run model
-        var distance_local = Float.MAX_VALUE
-        val id = "0"
-        val label = "?"
 
-        //Compare new face with saved Faces.
-//        if (registered.size > 0) {
-//            val nearest: List<Pair<String, Float>?> =
-//                findNearest(embeedings.get(0)) //Find 2 closest matching face
-//            if (nearest[0] != null) {
-//                val name = nearest[0]!!.first //get name and distance of closest matching face
-//                // label = name;
-//                distance_local = nearest[0]!!.second
-//                if (developerMode) {
-//                    if (distance_local < distance) //If distance between Closest found face is more than 1.000 ,then output UNKNOWN face.
-//                        reco_name.setText(
-//                            """
-//                        Nearest: $name
-//                        Dist: ${String.format("%.3f", distance_local)}
-//                        2nd Nearest: ${nearest[1]!!.first}
-//                        Dist: ${String.format("%.3f", nearest[1]!!.second)}
-//                        """.trimIndent()
-//                        ) else reco_name.setText(
-//                        """
-//                        Unknown
-//                        Dist: ${String.format("%.3f", distance_local)}
-//                        Nearest: $name
-//                        Dist: ${String.format("%.3f", distance_local)}
-//                        2nd Nearest: ${nearest[1]!!.first}
-//                        Dist: ${String.format("%.3f", nearest[1]!!.second)}
-//                        """.trimIndent()
-//                    )
+//    fun recognizeImage(bitmap: Bitmap) {
 //
-////                    System.out.println("nearest: " + name + " - distance: " + distance_local);
-//                } else {
-//                    if (distance_local < distance) //If distance between Closest found face is more than 1.000 ,then output UNKNOWN face.
-//                        reco_name.setText(name) else reco_name.setText("Unknown")
-//                    //                    System.out.println("nearest: " + name + " - distance: " + distance_local);
+//        // set Face to Preview
+//        binding.ivCapture.setImageBitmap(bitmap)
+//
+//        //Create ByteBuffer to store normalized image
+//        val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
+//        imgData.order(ByteOrder.nativeOrder())
+//        intValues = IntArray(inputSize * inputSize)
+//
+//        //get pixel values from Bitmap to normalize
+//        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+//        imgData.rewind()
+//        for (i in 0 until inputSize) {
+//            for (j in 0 until inputSize) {
+//                val pixelValue: Int = intValues.get(i * inputSize + j)
+//                if (isModelQuantized) {
+//                    // Quantized model
+//                    imgData.put((pixelValue shr 16 and 0xFF).toByte())
+//                    imgData.put((pixelValue shr 8 and 0xFF).toByte())
+//                    imgData.put((pixelValue and 0xFF).toByte())
+//                } else { // Float model
+//                    imgData.putFloat(((pixelValue shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
+//                    imgData.putFloat(((pixelValue shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
+//                    imgData.putFloat(((pixelValue and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
 //                }
 //            }
 //        }
-
-
-//            final int numDetectionsOutput = 1;
-//            final ArrayList<SimilarityClassifier.Recognition> recognitions = new ArrayList<>(numDetectionsOutput);
-//            SimilarityClassifier.Recognition rec = new SimilarityClassifier.Recognition(
-//                    id,
-//                    label,
-//                    distance);
+//        //imgData is input to our model
+//        val inputArray = arrayOf<Any>(imgData)
+//        val outputMap: MutableMap<Int, Any> = HashMap()
+//        embeedings =
+//            Array<FloatArray>(1) { FloatArray(OUTPUT_SIZE) } //output of model will be stored in this variable
+//        outputMap[0] = embeedings
+//        tfLite!!.runForMultipleInputsOutputs(inputArray, outputMap) //Run model
+//        var distance_local = Float.MAX_VALUE
+//        val id = "0"
+//        val label = "?"
 //
-//            recognitions.add( rec );
-    }
+//        //Compare new face with saved Faces.
+////        if (registered.size > 0) {
+////            val nearest: List<Pair<String, Float>?> =
+////                findNearest(embeedings.get(0)) //Find 2 closest matching face
+////            if (nearest[0] != null) {
+////                val name = nearest[0]!!.first //get name and distance of closest matching face
+////                // label = name;
+////                distance_local = nearest[0]!!.second
+////                if (developerMode) {
+////                    if (distance_local < distance) //If distance between Closest found face is more than 1.000 ,then output UNKNOWN face.
+////                        reco_name.setText(
+////                            """
+////                        Nearest: $name
+////                        Dist: ${String.format("%.3f", distance_local)}
+////                        2nd Nearest: ${nearest[1]!!.first}
+////                        Dist: ${String.format("%.3f", nearest[1]!!.second)}
+////                        """.trimIndent()
+////                        ) else reco_name.setText(
+////                        """
+////                        Unknown
+////                        Dist: ${String.format("%.3f", distance_local)}
+////                        Nearest: $name
+////                        Dist: ${String.format("%.3f", distance_local)}
+////                        2nd Nearest: ${nearest[1]!!.first}
+////                        Dist: ${String.format("%.3f", nearest[1]!!.second)}
+////                        """.trimIndent()
+////                    )
+////
+//////                    System.out.println("nearest: " + name + " - distance: " + distance_local);
+////                } else {
+////                    if (distance_local < distance) //If distance between Closest found face is more than 1.000 ,then output UNKNOWN face.
+////                        reco_name.setText(name) else reco_name.setText("Unknown")
+////                    //                    System.out.println("nearest: " + name + " - distance: " + distance_local);
+////                }
+////            }
+////        }
+//
+//
+////            final int numDetectionsOutput = 1;
+////            final ArrayList<SimilarityClassifier.Recognition> recognitions = new ArrayList<>(numDetectionsOutput);
+////            SimilarityClassifier.Recognition rec = new SimilarityClassifier.Recognition(
+////                    id,
+////                    label,
+////                    distance);
+////
+////            recognitions.add( rec );
+//    }
 
     fun getResizedBitmap(bm: Bitmap, newWidth: Int, newHeight: Int): Bitmap {
         val width = bm.width

@@ -22,7 +22,6 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.View
 import android.view.animation.LinearInterpolator
-import android.widget.AdapterView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -33,18 +32,18 @@ import com.google.gson.reflect.TypeToken
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.tvisha.MobileFaceNet
 import com.tvisha.featureRegister.RegisterFaceActivity
 import com.tvisha.featureRegister.SimilarityClassifier
 import com.tvisha.livenessdetect.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
-import org.tensorflow.lite.Interpreter
+import org.checkerframework.checker.units.qual.h
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
+
 
 @ObsoleteCoroutinesApi
 class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDialogListener {
@@ -57,8 +56,8 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 
     private var camera: Camera? = null
     private var cameraId: Int = Camera.CameraInfo.CAMERA_FACING_FRONT
-    private val previewWidth: Int = 640
-    private val previewHeight: Int = 480
+    private var previewWidth: Int = /*640*/1280
+    private var previewHeight: Int = /*480*/720
 
     /**
      *    1       2       3       4        5          6          7            8
@@ -84,18 +83,21 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        binding = DataBindingUtil.setContentView(this, R.layout.activity_main)
 
         if (hasPermissions()) {
             init()
         } else {
             requestPermission()
         }
+
         binding.recognize.setOnClickListener {
             isButtonClicked = true
         }
         binding.selectUser.setOnClickListener {
             displaynameListview()
         }
+
     }
 
     private fun hasPermissions(): Boolean {
@@ -113,12 +115,36 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
     private fun requestPermission() = requestPermissions(permissions, permissionReqCode)
 
     var isButtonClicked = false
-
+    private fun getOptimalPreviewSize(sizes: List<Camera.Size>?, w: Int, h: Int): Camera.Size? {
+        val ASPECT_TOLERANCE = 0.1
+        val targetRatio = h.toDouble() / w
+        if (sizes == null) return null
+        var optimalSize: Camera.Size? = null
+        var minDiff = Double.MAX_VALUE
+        for (size in sizes) {
+            val ratio = size.width.toDouble() / size.height
+            if (Math.abs(ratio - targetRatio) > ASPECT_TOLERANCE) continue
+            if (Math.abs(size.height - h) < minDiff) {
+                optimalSize = size
+                minDiff = Math.abs(size.height - h).toDouble()
+            }
+        }
+        if (optimalSize == null) {
+            minDiff = Double.MAX_VALUE
+            for (size in sizes) {
+                if (Math.abs(size.height - h) < minDiff) {
+                    optimalSize = size
+                    minDiff = Math.abs(size.height - h).toDouble()
+                }
+            }
+        }
+        return optimalSize
+    }
     private fun init() {
-        binding = DataBindingUtil.setContentView(this, R.layout.activity_main)
         binding.result = DetectionResult()
 
         calculateSize()
+
         binding.register.setOnClickListener {
             startActivity(Intent(this@MainActivity, RegisterFaceActivity::class.java))
         }
@@ -142,6 +168,20 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
                     }
 
                     val parameters = camera?.parameters
+//
+//                    val size = getOptimalPreviewSize(camera?.parameters?.supportedPreviewSizes, previewWidth,previewHeight)
+                    val params: Camera.Parameters? = camera?.getParameters()
+                    val sizes = params?.supportedPreviewSizes
+                    val optimalSize = getOptimalPreviewSize(sizes, width, height)
+                    params?.setPreviewSize(optimalSize!!.width, optimalSize!!.height)
+                    previewWidth = optimalSize?.width?:0
+                    previewHeight = optimalSize?.height?:0
+//                    for(size in camera?.parameters?.supportedPreviewSizes!!){
+//                        Log.d("ganga"," size ${size.width} ${size.height}")
+//                    }
+//                    previewHeight = 720
+//                    previewWidth = 1280
+//
                     parameters?.setPreviewSize(previewWidth, previewHeight)
 
                     factorX = screenWidth / previewHeight.toFloat()
@@ -273,11 +313,12 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 //                                    setImage(inputImage)
         }else {
             lifecycleScope.async (Dispatchers.Main){
-                Toast.makeText(
-                    this@MainActivity,
-                    "User is Spoofing",
-                    Toast.LENGTH_LONG
-                ).show()
+                Log.d("ganga", "user is spoofing")
+//                Toast.makeText(
+//                    this@MainActivity,
+//                    "User is Spoofing",
+//                    Toast.LENGTH_LONG
+//                ).show()
             }
         }
     }
@@ -428,63 +469,67 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 
         // set Face to Preview
 //        face_preview.setImageBitmap(bitmap)
-
+        val mfn = MobileFaceNet(assets)
+        embeedings = mfn.getImageEmbedding(bitmap)
         //Create ByteBuffer to store normalized image
-        val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
-        imgData.order(ByteOrder.nativeOrder())
-        intValues = IntArray(inputSize * inputSize)
-
-        //get pixel values from Bitmap to normalize
-        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        imgData.rewind()
-        for (i in 0 until inputSize) {
-            for (j in 0 until inputSize) {
-                val pixelValue: Int = intValues.get(i * inputSize + j)
-                if (isModelQuantized) {
-                    // Quantized model
-                    imgData.put((pixelValue shr 16 and 0xFF).toByte())
-                    imgData.put((pixelValue shr 8 and 0xFF).toByte())
-                    imgData.put((pixelValue and 0xFF).toByte())
-                } else { // Float model
-                    imgData.putFloat(((pixelValue shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                    imgData.putFloat(((pixelValue shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                    imgData.putFloat(((pixelValue and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
-                }
-            }
-        }
-        //imgData is input to our model
-        val inputArray = arrayOf<Any>(imgData)
-        val outputMap: MutableMap<Int, Any> = HashMap()
-        embeedings =
-            Array<FloatArray>(1) { FloatArray(OUTPUT_SIZE) } //output of model will be stored in this variable
-        outputMap[0] = embeedings
-
-        lateinit var tfLite : Interpreter
-        //Load model
-        try {
-            tfLite = Interpreter(loadModelFile(this@MainActivity,
-                "mobilefacenet.tflite" //model name
-            ))
-        } catch (e: IOException) {
-            e.printStackTrace()
-        }
-        tfLite.runForMultipleInputsOutputs(inputArray, outputMap) //Run model
+//        val imgData = ByteBuffer.allocateDirect(1 * inputSize * inputSize * 3 * 4)
+//        imgData.order(ByteOrder.nativeOrder())
+//        intValues = IntArray(inputSize * inputSize)
+//
+//        //get pixel values from Bitmap to normalize
+//        bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+//        imgData.rewind()
+//        for (i in 0 until inputSize) {
+//            for (j in 0 until inputSize) {
+//                val pixelValue: Int = intValues.get(i * inputSize + j)
+//                if (isModelQuantized) {
+//                    // Quantized model
+//                    imgData.put((pixelValue shr 16 and 0xFF).toByte())
+//                    imgData.put((pixelValue shr 8 and 0xFF).toByte())
+//                    imgData.put((pixelValue and 0xFF).toByte())
+//                } else { // Float model
+//                    imgData.putFloat(((pixelValue shr 16 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
+//                    imgData.putFloat(((pixelValue shr 8 and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
+//                    imgData.putFloat(((pixelValue and 0xFF) - IMAGE_MEAN) / IMAGE_STD)
+//                }
+//            }
+//        }
+//        //imgData is input to our model
+//        val inputArray = arrayOf<Any>(imgData)
+//        val outputMap: MutableMap<Int, Any> = HashMap()
+//        embeedings =
+//            Array<FloatArray>(1) { FloatArray(OUTPUT_SIZE) } //output of model will be stored in this variable
+//        outputMap[0] = embeedings
+//
+//        lateinit var tfLite : Interpreter
+//        //Load model
+//        try {
+//            tfLite = Interpreter(loadModelFile(this@MainActivity,
+//                "mobilefacenet.tflite" //model name
+//            ))
+//        } catch (e: IOException) {
+//            e.printStackTrace()
+//        }
+//        tfLite.runForMultipleInputsOutputs(inputArray, outputMap) //Run model
         var distance_local = Float.MAX_VALUE
         val id = "0"
         val label = "?"
 
-        val registered = readFromSP()
+        val registered = readFromSP().filter { entry -> entry.key.equals(selectedUser) } as HashMap
         //Compare new face with saved Faces.
         if (registered.size > 0) {
             val nearest: List<Pair<String, Float>?> =
-                findNearest(embeedings.get(0), registered) //Find 2 closest matching face
+                findNearest(embeedings[0], registered) //Find 2 closest matching face
             if (nearest[0] != null) {
-                if(nearest[0]!!.second < 0.5) {
+                if(nearest[0]!!.second < 0.9) {
                     val name = nearest[0]!!.first
                     Toast.makeText(this@MainActivity, "User is $name", Toast.LENGTH_LONG).show()
+
                     Log.d("ganga", name)
-                }else {
-                    Toast.makeText(this@MainActivity, "User not recognized", Toast.LENGTH_LONG).show()
+                } else {
+                    isButtonClicked = true
+                    Log.d("ganga","user not recognized")
+//                    Toast.makeText(this@MainActivity, "User not recognized", Toast.LENGTH_LONG).show()
                 }
                 //get name and distance of closest matching face
                 // label = name;
@@ -602,6 +647,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
         windowManager.defaultDisplay.getMetrics(dm)
         screenWidth = dm.widthPixels
         screenHeight = dm.heightPixels
+        Log.d("ganga", "screen widht $screenWidth, height $screenHeight")
     }
     fun rotateImage(source: Bitmap, angle: Float): Bitmap {
         val matrix = Matrix()
