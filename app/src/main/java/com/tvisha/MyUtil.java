@@ -12,6 +12,8 @@ import android.graphics.Matrix;
 import android.graphics.Rect;
 
 
+import com.tvisha.mtcnn.Box;
+
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;

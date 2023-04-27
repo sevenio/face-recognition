@@ -7,6 +7,7 @@ import android.graphics.*
 import android.media.Image
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.util.Size
 import android.widget.EditText
 import android.widget.Toast
@@ -18,6 +19,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -26,7 +28,13 @@ import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.tvisha.MobileFaceNet
+import com.tvisha.MyUtil
 import com.tvisha.livenessdetect.databinding.ActivityRegisterBinding
+import com.tvisha.livenessdetect.databinding.AlertAddImageBinding
+import com.tvisha.mtcnn.Align
+import com.tvisha.mtcnn.Box
+import com.tvisha.mtcnn.MTCNN
+import kotlinx.coroutines.async
 import org.tensorflow.lite.Interpreter
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
@@ -34,6 +42,7 @@ import java.io.IOException
 import java.nio.MappedByteBuffer
 import java.nio.ReadOnlyBufferException
 import java.nio.channels.FileChannel
+import java.util.*
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -41,6 +50,8 @@ import kotlin.experimental.inv
 
 
 class RegisterFaceActivity : AppCompatActivity() {
+    private lateinit var mtcnn //Face Detection
+            : MTCNN
 
     private lateinit var binding: ActivityRegisterBinding
     private var cam_face = CameraSelector.LENS_FACING_FRONT //Default Back Camera
@@ -63,61 +74,20 @@ class RegisterFaceActivity : AppCompatActivity() {
         }
 
         binding.btnRegister.setOnClickListener {
-            addUser()
+            start = true
+            Log.d("ganga", "btn clic $start")
         }
 
         binding.btnActions.setOnClickListener {
-            val builder = AlertDialog.Builder(this@RegisterFaceActivity)
-            builder.setTitle("Select Action:")
+            displaynameListview()
 
-            // add a checkbox list
-
-            // add a checkbox list
-            val names = arrayOf(
-                "View Recognition List",
-/*
-                "Update Recognition List",
-*/
-               /* "Save Recognitions",
-                "Load Recognitions",
-                "Clear All Recognitions",
-                "Import Photo (Beta)",*/
-/*
-                "Hyperparameters",
-*/
-/*
-                "Developer Mode"
-*/
-            )
-
-            builder.setItems(
-                names
-            ) { dialog, which ->
-                when (which) {
-                    0 -> displaynameListview()
-                  /*  1 -> updatenameListview()
-                    2 -> insertToSP(registered, 0) //mode: 0:save all, 1:clear all, 2:update all
-                    3 -> registered.putAll(readFromSP())
-                    4 -> clearnameList()
-                    5 -> loadphoto()
-                    6 -> testHyperparameter()
-                    7 -> developerMode()*/
-                }
-            }
-
-
-            builder.setPositiveButton(
-                "OK"
-            ) { dialog, which -> }
-            builder.setNegativeButton("Cancel", null)
-
-            // create and show the alert dialog
-
-            // create and show the alert dialog
-            val dialog = builder.create()
-            dialog.show()
         }
+        try {
+            mtcnn = MTCNN(assets)
 
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
         //Load model
         try {
             tfLite = Interpreter(loadModelFile(this@RegisterFaceActivity, modelFile))
@@ -128,6 +98,7 @@ class RegisterFaceActivity : AppCompatActivity() {
         //Initialize Face Detector
         val highAccuracyOpts = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .build()
         detector = FaceDetection.getClient(highAccuracyOpts)
         cameraBind()
@@ -142,7 +113,7 @@ class RegisterFaceActivity : AppCompatActivity() {
         val names = arrayOfNulls<String>(registered.size)
         val checkedItems = BooleanArray(registered.size)
         var i = 0
-        for ( key in registered.keys) {
+        for (key in registered.keys) {
             //System.out.println("NAME"+entry.getKey());
             names[i] = key
             checkedItems[i] = false
@@ -212,6 +183,22 @@ class RegisterFaceActivity : AppCompatActivity() {
         return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
     }
 
+    private fun alignFace(bitmap: Bitmap, leftEye: PointF, rightEye: PointF): Bitmap? {
+        val diffEyeX: Float = (leftEye.x - rightEye.x)
+        val diffEyeY: Float = (leftEye.y - rightEye.y)
+
+        val fAngle: Float
+
+        fAngle = if (Math.abs(diffEyeY) < 1e-7) {
+            0f
+        } else {
+            (Math.atan((diffEyeY / diffEyeX).toDouble()) * 180.0f / Math.PI).toFloat()
+        }
+        val matrix = Matrix()
+        matrix.setRotate(-fAngle)
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
     fun bindPreview(cameraProvider: ProcessCameraProvider) {
         val preview = Preview.Builder()
             .build()
@@ -220,7 +207,7 @@ class RegisterFaceActivity : AppCompatActivity() {
             .build()
         preview.setSurfaceProvider(binding.ivPreview.surfaceProvider)
         val imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(Size(640, 480))
+            .setTargetResolution(Size(1280, 720))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) //Latest frame is shown
             .build()
         val executor: Executor = Executors.newSingleThreadExecutor()
@@ -238,55 +225,116 @@ class RegisterFaceActivity : AppCompatActivity() {
                 //                    System.out.println("Rotation "+imageProxy.getImageInfo().getRotationDegrees());
             }
 
-//                System.out.println("ANALYSIS");
-
-            //Process acquired image to detect faces
-
-//                System.out.println("ANALYSIS");
-
-            //Process acquired image to detect faces
-            val result = detector!!.process(
-                image!!
-            )
-                .addOnSuccessListener { faces ->
-                    if (faces.size != 0) {
-                        val face = faces[0] //Get first face from detected faces
-                        //                                                    System.out.println(face);
-
-                        //mediaImage to Bitmap
-                        val frame_bmp: Bitmap = toBitmap(mediaImage!!)
-                        val rot = imageProxy.imageInfo.rotationDegrees
+            Log.d("ganga", "inside $start")
+            if (start) {
+                start = false
+//                lifecycleScope.async{
+                runOnUiThread {
+                    val bitmap = toBitmap(mediaImage!!)
+                    val rot = imageProxy.imageInfo.rotationDegrees
 
                         //Adjust orientation of Face
-                        val frame_bmp1: Bitmap =
-                            rotateBitmap(frame_bmp, rot, false, false)
+                    val frame_bmp1: Bitmap =
+                        rotateBitmap(bitmap, rot, false, false)
 
+                    var bitmapTemp1: Bitmap =
+                        frame_bmp1.copy(frame_bmp1.getConfig(), false)
+                    var boxes1: Vector<Box> = mtcnn.detectFaces(
+                        bitmapTemp1,
+                        bitmapTemp1.width / 5
+                    ) // Only this line of code detects the face, and the following is to cut out the face in the picture according to the Box
 
-                        //Get bounding box of face
-                        val boundingBox = RectF(face.boundingBox)
+                    // Here, because there is only one face in each photo used, the first value is used to crop the face
+                    var box1 = boxes1[0]
 
-                        //Crop out bounding box from whole Bitmap(image)
-                        var cropped_face: Bitmap =
-                            getCropBitmapByCPU(frame_bmp1, boundingBox)
-//                        if (flipX) cropped_face =
-//                            rotateBitmap(cropped_face, 0, flipX, false)
-                        //Scale the acquired Face to 112*112 which is required input for model
-                        val scaled: Bitmap = getResizedBitmap(cropped_face, 112, 112)
-                        if (start) recognizeImage(scaled) //Send scaled bitmap to create face embeddings.
-                        //                                                    System.out.println(boundingBox);
-                    } else {
-//                        if (registered.isEmpty()) reco_name.setText("Add Face") else reco_name.setText(
-//                            "No Face Detected!"
-//                        )
-                    }
+                    // face correction
+                    bitmapTemp1 = Align.face_align(bitmapTemp1, box1.landmark)
+                    boxes1 = mtcnn.detectFaces(bitmapTemp1, bitmapTemp1.width / 5)
+                    box1 = boxes1[0]
+                    box1.toSquareShape()
+                    box1.limitSquare(bitmapTemp1.width, bitmapTemp1.height)
+                    val rect1 = box1.transform2Rect()
+
+                    // crop the face
+                    val bitmapCrop1 = MyUtil.crop(bitmapTemp1, rect1)
+
+                    val bitmapScale1 = Bitmap.createScaledBitmap(bitmapCrop1, 112, 112, true)
+                    binding.ivCapture.setImageBitmap(frame_bmp1)
+
+                    addUser(bitmapScale1)
+
+//                }
                 }
-                .addOnFailureListener {
-                    // Task failed with an exception
-                    // ...
-                }
+            }
+            val result = detector!!.process(
+                image!!
+            ).addOnSuccessListener {
+                Log.d("ganga", "onsuccess")
+            }.addOnFailureListener {
+                // Task failed with an exception
+                // ...
+                Log.d("ganga", "addOnFailureListener")
+
+            }
                 .addOnCompleteListener {
                     imageProxy.close() //v.important to acquire next frame for analysis
+                    Log.d("ganga", "addOnCompleteListener")
+
                 }
+
+//                System.out.println("ANALYSIS");
+
+            //Process acquired image to detect faces
+
+//                System.out.println("ANALYSIS");
+
+            //Process acquired image to detect faces
+//            val result = detector!!.process(
+//                image!!
+//            )
+//                .addOnSuccessListener { faces ->
+//                    if (faces.size != 0) {
+//                        val face = faces[0] //Get first face from detected faces
+//                        val leftEyePosition = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
+//                        val rightEyePosition = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
+//
+//                        //mediaImage to Bitmap
+//                        val frame_bmp: Bitmap = toBitmap(mediaImage!!)
+//                        val rot = imageProxy.imageInfo.rotationDegrees
+//
+//                        //Adjust orientation of Face
+//                        val frame_bmp1: Bitmap =
+//                            rotateBitmap(frame_bmp, rot, false, false)
+//
+//                        val aligned_bitmap = alignFace(
+//                            frame_bmp1,
+//                            leftEyePosition ?: PointF(0f, 0f),
+//                            rightEyePosition ?: PointF(0F, 0F)
+//                        )
+//                        //Get bounding box of face
+//                        val boundingBox = RectF(face.boundingBox)
+//
+//                        //Crop out bounding box from whole Bitmap(image)
+//                        var cropped_face: Bitmap =
+//                            getCropBitmapByCPU(aligned_bitmap, boundingBox)
+//
+//                        //Scale the acquired Face to 112*112 which is required input for model
+//                        val scaled: Bitmap = getResizedBitmap(cropped_face, 112, 112)
+//                        if (start) recognizeImage(scaled) //Send scaled bitmap to create face embeddings.
+//
+//                    } else {
+////                        if (registered.isEmpty()) reco_name.setText("Add Face") else reco_name.setText(
+////                            "No Face Detected!"
+////                        )
+//                    }
+//                }
+//                .addOnFailureListener {
+//                    // Task failed with an exception
+//                    // ...
+//                }
+//                .addOnCompleteListener {
+//                    imageProxy.close() //v.important to acquire next frame for analysis
+//                }
 
 
         }
@@ -312,21 +360,22 @@ class RegisterFaceActivity : AppCompatActivity() {
     private var registered: java.util.HashMap<String, SimilarityClassifier.Recognition> =
         java.util.HashMap<String, SimilarityClassifier.Recognition>() //saved Faces
 
-    var start = true
+    var start = false
+    private val mData: ByteArray? = null
 
 
-    private fun addUser() {
-        start = false
+    private fun addUser(bitmap: Bitmap) {
         val builder = AlertDialog.Builder(this@RegisterFaceActivity)
         builder.setTitle("Enter Name")
+        val binding = AlertAddImageBinding.inflate(layoutInflater)
 
         // Set up the input
 
         // Set up the input
-        val input = EditText(this@RegisterFaceActivity)
-
+        val input = binding.etName
+        binding.image.setImageBitmap(bitmap)
         input.inputType = InputType.TYPE_CLASS_TEXT
-        builder.setView(input)
+        builder.setView(binding.root)
 
         // Set up the buttons
 
@@ -337,15 +386,20 @@ class RegisterFaceActivity : AppCompatActivity() {
             val result = SimilarityClassifier.Recognition(
                 "0", "", -1f
             )
+            val mfn = MobileFaceNet(assets)
+            embeedings = mfn.getImageEmbedding(bitmap)
             result.setExtra(embeedings)
-            registered[input.text.toString()] = result
-            start = true
-            insertToSP(registered, 2)
+            if(input.text.toString().isNotBlank()) {
+                registered[input.text.toString()] = result
+//            start = true
+
+                insertToSP(registered, 2)
+            }
         }
         builder.setNegativeButton(
             "Cancel"
         ) { dialog, which ->
-            start = true
+//            start = true
             dialog.cancel()
         }
 
@@ -369,6 +423,7 @@ class RegisterFaceActivity : AppCompatActivity() {
         //System.out.println("Input josn"+jsonString.toString());
         editor.apply()
         Toast.makeText(this@RegisterFaceActivity, "Recognitions Saved", Toast.LENGTH_SHORT).show()
+        finish()
     }
 
     private fun readFromSP(): java.util.HashMap<String, SimilarityClassifier.Recognition> {
@@ -413,7 +468,6 @@ class RegisterFaceActivity : AppCompatActivity() {
         val mfn = MobileFaceNet(assets)
         embeedings = mfn.getImageEmbedding(bitmap)
     }
-
 
 
 //    fun recognizeImage(bitmap: Bitmap) {

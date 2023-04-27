@@ -1,4 +1,4 @@
-package com.tvisha;
+package com.tvisha.mtcnn;
 
 import static java.lang.Math.max;
 
@@ -13,7 +13,7 @@ public class Box {
     public float score;         // probability
     public float[] bbr;         // bounding box regression
     public boolean deleted;
-    public Point[] landmark;    // facial landmark.只有ONet输出Landmark
+    public Point[] landmark;    // facial landmark. Only ONet outputs Landmark
 
     public Box() {
         box = new int[4];
@@ -46,7 +46,7 @@ public class Box {
         return box[3] - box[1] + 1;
     }
 
-    // 转为rect
+    // convert to rect
     public Rect transform2Rect() {
         Rect rect = new Rect();
         rect.left = box[0];
@@ -56,7 +56,7 @@ public class Box {
         return rect;
     }
 
-    // 面积
+    // area
     public int area() {
         return width() * height();
     }
@@ -72,8 +72,8 @@ public class Box {
         for (int i = 0; i < 4; i++) bbr[i] = 0.0f;
     }
 
-    // 当前box转为正方形
-    public void toSquareShape() {
+    // The current box turns into a square
+     public void toSquareShape() {
         int w = width();
         int h = height();
         if (w > h) {
@@ -85,7 +85,7 @@ public class Box {
         }
     }
 
-    // 防止边界溢出，并维持square大小
+    // prevent border overflow and maintain square size
     public void limitSquare(int w, int h) {
         if (box[0] < 0 || box[1] < 0) {
             int len = max(-box[0], -box[1]);
@@ -99,8 +99,8 @@ public class Box {
         }
     }
 
-    // 坐标是否越界
-    public boolean transbound(int w, int h) {
+// Whether the coordinates are out of bounds
+ public boolean transbound(int w, int h) {
         if (box[0] < 0 || box[1] < 0) {
             return true;
         } else if (box[2] >= w || box[3] >= h) {

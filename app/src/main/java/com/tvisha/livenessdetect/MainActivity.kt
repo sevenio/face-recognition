@@ -33,16 +33,20 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.tvisha.MobileFaceNet
+import com.tvisha.MyUtil
 import com.tvisha.featureRegister.RegisterFaceActivity
 import com.tvisha.featureRegister.SimilarityClassifier
 import com.tvisha.livenessdetect.databinding.ActivityMainBinding
+import com.tvisha.mtcnn.Align
+import com.tvisha.mtcnn.Box
+import com.tvisha.mtcnn.MTCNN
 import kotlinx.coroutines.*
-import org.checkerframework.checker.units.qual.h
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.IOException
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
+import java.util.*
 
 
 @ObsoleteCoroutinesApi
@@ -79,12 +83,12 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
     private val detectionContext = newSingleThreadContext("detection")
     private var working: Boolean = false
 
-    private lateinit var scaleAnimator: ObjectAnimator
+//    private lateinit var scaleAnimator: ObjectAnimator
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = DataBindingUtil.setContentView(this, R.layout.activity_main)
-
+        selectedUser = intent.getStringExtra("selectedUser")?:""
         if (hasPermissions()) {
             init()
         } else {
@@ -92,11 +96,10 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
         }
 
         binding.recognize.setOnClickListener {
+            noOfTimes = 3
             isButtonClicked = true
         }
-        binding.selectUser.setOnClickListener {
-            displaynameListview()
-        }
+
 
     }
 
@@ -145,9 +148,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 
         calculateSize()
 
-        binding.register.setOnClickListener {
-            startActivity(Intent(this@MainActivity, RegisterFaceActivity::class.java))
-        }
+
         binding.surface.holder.let {
             it.setFormat(ImageFormat.NV21)
             it.addCallback(object : SurfaceHolder.Callback, Camera.PreviewCallback {
@@ -257,13 +258,13 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
             })
         }
 
-        scaleAnimator = ObjectAnimator.ofFloat(binding.scan, View.SCALE_Y, 1F, -1F, 1F).apply {
-            this.duration = 3000
-            this.repeatCount = ValueAnimator.INFINITE
-            this.repeatMode = ValueAnimator.REVERSE
-            this.interpolator = LinearInterpolator()
-            this.start()
-        }
+//        scaleAnimator = ObjectAnimator.ofFloat(binding.scan, View.SCALE_Y, 1F, -1F, 1F).apply {
+//            this.duration = 3000
+//            this.repeatCount = ValueAnimator.INFINITE
+//            this.repeatMode = ValueAnimator.REVERSE
+//            this.interpolator = LinearInterpolator()
+//            this.start()
+//        }
 
     }
 
@@ -308,7 +309,8 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
                     0,
                     imageBytes.size
                 )
-                detectFaces(rotateImage(image, 270.0F))
+//                detectFaces(rotateImage(image, 270.0F))
+                detectFacesUsigImageNets(rotateImage(image,270.0F))
             }
 //                                    setImage(inputImage)
         }else {
@@ -322,7 +324,41 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
             }
         }
     }
+    private lateinit var mtcnn //Face Detection
+            : MTCNN
+    private fun detectFacesUsigImageNets(bitmap: Bitmap){
+        var bitmapTemp1: Bitmap =
+            bitmap.copy(bitmap.getConfig(), false)
 
+        try {
+            mtcnn = MTCNN(assets)
+
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+        var boxes1: Vector<Box> = mtcnn.detectFaces(
+            bitmapTemp1,
+            bitmapTemp1.width / 5
+        ) // Only this line of code detects the face, and the following is to cut out the face in the picture according to the Box
+
+        // Here, because there is only one face in each photo used, the first value is used to crop the face
+        var box1 = boxes1[0]
+
+        // face correction
+        bitmapTemp1 = Align.face_align(bitmapTemp1, box1.landmark)
+        boxes1 = mtcnn.detectFaces(bitmapTemp1, bitmapTemp1.width / 5)
+        box1 = boxes1[0]
+        box1.toSquareShape()
+        box1.limitSquare(bitmapTemp1.width, bitmapTemp1.height)
+        val rect1 = box1.transform2Rect()
+
+        // crop the face
+        val bitmapCrop1 = MyUtil.crop(bitmapTemp1, rect1)
+
+        val bitmapScale1 = Bitmap.createScaledBitmap(bitmapCrop1, 112, 112, true)
+        binding.image.setImageBitmap(bitmapScale1)
+        recognizeImage(bitmapScale1)
+    }
 
     private fun detectFaces(bitmap: Bitmap){
         val highAccuracyOpts = FaceDetectorOptions.Builder()
@@ -450,6 +486,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
             override fun onClick(p0: DialogInterface?, p1: Int) {
                 Log.d("ganga", names[p1]?:"nothing")
                 selectedUser = names[p1]?:""
+
             }
 
         })
@@ -465,6 +502,28 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
         val dialog = builder.create()
         dialog.show()
     }
+
+    //
+    //    /**
+    //     * Calculate the similarity of two pictures, using l2 loss
+    //     * @param embeddings
+    //     * @return
+    //     */
+    private fun evaluate(embeddings1: FloatArray, embeddings2: FloatArray): Float {
+        var dist = 0f
+        for (i in 0..191) {
+            dist += Math.pow((embeddings1[i] - embeddings2[i]).toDouble(), 2.0).toFloat()
+        }
+        var same = 0f
+        for (i in 0..399) {
+            val threshold = 0.01f * (i + 1)
+            if (dist < threshold) {
+                same += (1.0 / 400).toFloat()
+            }
+        }
+        return same
+    }
+    var noOfTimes = 3
     fun recognizeImage(bitmap: Bitmap) {
 
         // set Face to Preview
@@ -511,25 +570,30 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 //            e.printStackTrace()
 //        }
 //        tfLite.runForMultipleInputsOutputs(inputArray, outputMap) //Run model
-        var distance_local = Float.MAX_VALUE
-        val id = "0"
-        val label = "?"
+//        var distance_local = Float.MAX_VALUE
+//        val id = "0"
+//        val label = "?"
 
         val registered = readFromSP().filter { entry -> entry.key.equals(selectedUser) } as HashMap
         //Compare new face with saved Faces.
         if (registered.size > 0) {
-            val nearest: List<Pair<String, Float>?> =
-                findNearest(embeedings[0], registered) //Find 2 closest matching face
-            if (nearest[0] != null) {
-                if(nearest[0]!!.second < 0.9) {
-                    val name = nearest[0]!!.first
+            val nearest =
+                evaluate(embeedings[0], (registered[selectedUser]?.extra as Array<FloatArray>)[0]) //Find 2 closest matching face
+//            if (nearest[0] != null) {
+                if(nearest > 0.8) {
+                    val name = selectedUser
                     Toast.makeText(this@MainActivity, "User is $name", Toast.LENGTH_LONG).show()
 
-                    Log.d("ganga", name)
+                    Log.d("ganga", "$name $nearest")
                 } else {
-                    isButtonClicked = true
-                    Log.d("ganga","user not recognized")
-//                    Toast.makeText(this@MainActivity, "User not recognized", Toast.LENGTH_LONG).show()
+                    Log.d("ganga","user not recognized $nearest")
+
+                    if(noOfTimes != 0) {
+                        --noOfTimes
+                        isButtonClicked = true
+                    }else {
+                    Toast.makeText(this@MainActivity, "User not recognized", Toast.LENGTH_LONG).show()
+                    }
                 }
                 //get name and distance of closest matching face
                 // label = name;
@@ -560,7 +624,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 //                        reco_name.setText(name) else reco_name.setText("Unknown")
 //                    //                    System.out.println("nearest: " + name + " - distance: " + distance_local);
 //                }
-            }
+//            }
         }
 
 
@@ -647,7 +711,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
         windowManager.defaultDisplay.getMetrics(dm)
         screenWidth = dm.widthPixels
         screenHeight = dm.heightPixels
-        Log.d("ganga", "screen widht $screenWidth, height $screenHeight")
+        Log.d("ganga", "screen width $screenWidth, height $screenHeight")
     }
     fun rotateImage(source: Bitmap, angle: Float): Bitmap {
         val matrix = Matrix()
@@ -704,7 +768,7 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 init()
             } else {
-                Toast.makeText(this, "请授权相机权限", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Please authorize camera permission", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -722,13 +786,13 @@ class MainActivity : AppCompatActivity(), SetThresholdDialogFragment.ThresholdDi
 
     override fun onDestroy() {
         engineWrapper.destroy()
-        scaleAnimator.cancel()
+//        scaleAnimator.cancel()
         super.onDestroy()
     }
 
     companion object {
         const val tag = "MainActivity"
-        const val defaultThreshold = 0.915F/*0.7F*/
+        const val defaultThreshold = /*0.915F*/0.7F
 
         val permissions: Array<String> = arrayOf(Manifest.permission.CAMERA)
         const val permissionReqCode = 1

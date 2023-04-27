@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA"/>
-
+    <uses-feature android:name="android.hardware.camera.autofocus" />
+    <uses-feature android:name="android.hardware.camera" />
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -17,13 +18,17 @@
             android:theme="@style/NoActionBarTheme"
             android:screenOrientation="portrait"
             android:exported="true">
+
+        </activity>
+        <activity android:name="com.tvisha.featureRegister.RegisterFaceActivity" />
+        <activity android:name="com.tvisha.featureRegister.MainFirstScreen"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name="com.tvisha.featureRegister.RegisterFaceActivity" />
 
     </application>
 

@@ -20,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
-        <View
+        <!--<View
             android:id="@+id/scan"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
@@ -29,7 +29,7 @@
             android:layout_marginRight="21dp"
             android:layout_marginBottom="136dp"
             android:visibility="@{result.hasFace ? View.GONE : View.VISIBLE}"
-            android:background="@drawable/scanning" />
+            android:background="@drawable/scanning" />-->
 
         <com.tvisha.livenessdetect.CoverView
             android:layout_width="match_parent"
@@ -118,12 +118,7 @@
             android:layout_alignParentBottom="true"
             android:layout_centerHorizontal="true">
 
-            <Button
-                android:id="@+id/register"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="register new user" />
+
 
             <Button
                 android:id="@+id/recognize"
@@ -132,12 +127,7 @@
                 android:layout_weight="1"
                 android:text="recognize user" />
 
-            <Button
-                android:id="@+id/selectUser"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="select user" />
+
         </LinearLayout>
 
         <ImageButton
